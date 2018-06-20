@@ -38,6 +38,8 @@ static const char gComputeShader[] =
                 "    output0.data[idx] = f;\n"
                 "}\n";
 
+
+
 #define CHECK() \
 {\
     GLenum err = glGetError(); \
@@ -52,6 +54,7 @@ static const char gComputeShader[] =
 }
 
 GLuint loadShader(GLenum shaderType, const char* pSource) {
+
     GLuint shader = glCreateShader(shaderType);
     if (shader) {
         glShaderSource(shader, 1, &pSource, NULL);
@@ -128,7 +131,7 @@ void tryComputeShader()
     LOG("create program end");
     CHECK();
 
-    const GLuint arraySize = 80000;
+    const GLuint arraySize = 8000;
     float f0[arraySize];
     float f1[arraySize];
     for (GLuint i = 0; i < arraySize; ++i)
@@ -145,7 +148,7 @@ void tryComputeShader()
     CHECK();
 
     glUseProgram(computeProgram);
-    glDispatchCompute(10,1,1);   // arraySize/local_size_x
+    glDispatchCompute(1000,1,1);   // arraySize/local_size_x
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     CHECK();
