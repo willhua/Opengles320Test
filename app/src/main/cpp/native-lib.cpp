@@ -353,6 +353,175 @@ void yuvToRgb()
 
 }
 
+//这个函数实现了从RGBA到LUV，然后再从LUV到RGB的转换
+void LuvAndRgb()
+{
+    using namespace cv;
+    using namespace std;
+
+    //得到yuv数据
+    const int w = 400;
+    const int h = 300;
+    Mat img = imread("/sdcard/in.jpg", 1);
+    resize(img, img, Size(w, h));
+    Mat rgba;
+    cvtColor(img, rgba, CV_BGR2RGBA);
+
+    //转换公式来源msseg
+    const   char rgbtoLuv[] = {
+            "#version 320 es\n"
+            "\n"
+            "layout(local_size_x=10, local_size_y=10) in;\n"
+            "layout(binding = 0) buffer InRGBA{\n"
+            "   uint data[];} inrgba;\n"
+            "layout(binding = 1) buffer InLUV{\n"
+            "   float data[];} inluv;\n"
+            "\n"
+            "uniform int width;\n"
+            "void main(){\n"
+            "   float L, u, v, up, vp;\n"
+            "   int index = int(gl_GlobalInvocationID.y) * width + int(gl_GlobalInvocationID.x);\n"
+            "   vec4 rgba = unpackUnorm4x8(inrgba.data[index]);\n"
+            "   rgba.x *= 255.0; rgba.y *= 255.0; rgba.z *= 255.0; \n"
+            "   float x = 0.4125 * rgba.x + 0.3576 * rgba.y + 0.1804 * rgba.z;\n"
+            "   float y = 0.2125 * rgba.x + 0.7154 * rgba.y + 0.0721 * rgba.z;\n"
+            "   float z = 0.0193 * rgba.x + 0.1192 * rgba.y + 0.9502 * rgba.z;\n"
+            "   float L0 = y/255.0;\n"
+            "   if(L0 > 0.008856)\n"
+            "       L = 116.0 * pow(L0, 1.0/3.0) - 16.0;\n"
+            "   else\n"
+            "       L = 903.3 * L0;\n"
+            "   float constant = x + 15.0 * y + 3.0 * z;\n"
+            "   if(constant != 0.0){\n"
+            "       up = (4.0 * x) / constant;\n"
+            "       vp = (9.0 * y) / constant;\n"
+            "   } else { \n"
+            "       up = 4.0; vp = 9.0/15.0; }\n"
+            "\n"
+            "   u = 13.0 * L * (up - 0.19784977571475);\n"
+            "   v = 13.0 * L * (vp - 0.46834507665248);\n"
+            "   inluv.data[index * 3] = L;\n"
+            "   inluv.data[index * 3 + 1] = u;\n"
+            "   inluv.data[index * 3 + 2] = v;\n"
+            "}"
+    };
+
+    const char luv2rgb[] = {
+            "#version 320 es\n"
+            "layout(local_size_x = 10, local_size_y = 10) in;\n"
+            "uniform int width;\n"
+            "layout(binding = 2) buffer OutRGBA{\n"
+            "   uint data[];} outrgba;\n"
+            "layout(binding = 1) buffer InLUV{\n"
+            "   float data[];} inluv;\n"
+            "\n"
+            "void main(){\n"
+            "   int index = int(gl_GlobalInvocationID.y) * width + int(gl_GlobalInvocationID.x);\n"
+            "   float L = inluv.data[index*3];\n"
+            "   float u = inluv.data[index*3+1];\n"
+            "   float v = inluv.data[index*3+2];\n"
+            "   float r,g,b,x,y,z,up,vp;\n"
+            "\n"
+            "   if(L < 0.1)\n"
+            "       r=g=b=0.0;\n"
+            "   else {\n"
+            "       if(L<8.0) { y=1.0*L/903.3;} else { y=(L+16.0)/116.0;y *= 1.0*y*y; }\n"
+            "       up=u/(13.0*L) + 0.197849775;\n"
+            "       vp=v/(13.0*L) + 0.46834507;\n"
+            "       x = 9.0 * up * y / (4.0 * vp);\n"
+            "       z = (12.0 - 3.0 * up - 20.0 * vp) * y / (4.0 * vp);\n"
+            "       r = 3.2405 * x - 1.5371 * y - 0.4985 * z;\n"
+            "       g = -0.9693 * x + 1.8760 * y + 0.0416 * z;\n"
+            "       b = 0.0556 * x - 0.2040 * y + 1.0573 * z;\n"
+            "       if(r < 0.0) r = 0.0; if(r > 1.0) r = 1.0;\n"
+            "       if(g < 0.0) g = 0.0; if(g > 1.0) g = 1.0;\n"
+            "       if(b < 0.0) b = 0.0; if(b > 1.0) b = 1.0;\n"
+            "   }\n"
+            "   outrgba.data[index] = packUnorm4x8(vec4(r,g,b,1.0));\n"
+            "}"
+    };
+
+    GLuint program = createComputeProgram(rgbtoLuv);
+    glUseProgram(program);
+    CHECK();
+    LOG("use program end");
+
+    GLuint inrgba;
+    glGenBuffers(1, &inrgba);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, inrgba);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, w*h*4, rgba.data, GL_STREAM_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, inrgba);
+
+    GLuint inluv;
+    glGenBuffers(1, &inluv);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, inluv);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, w*h*4 * 3, NULL, GL_STREAM_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, inluv);
+
+    GLint posw = glGetUniformLocation(program, "width");
+    glUniform1i(posw, w);
+    CHECK();
+    LOG("1 set param end w*h:%d ", posw);
+    glDispatchCompute(w/10, h/10, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    
+    {
+        //测试LUV的最大最小值
+        LOG("sizeof float:%d", sizeof(float));
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, inluv);
+        float *gpuf = (float*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, w*h*4*3, GL_MAP_READ_BIT);
+        
+        float maxl=-99999999999999, maxu=-99999999999, maxv=-99999999, minl=99999999, minu=999999, minv=999999;
+        for (int i = 0; i < w*h; ++i) {
+            if (maxl < gpuf[i*3]) maxl = gpuf[i*3];
+            if (minl > gpuf[i*3]) minl = gpuf[i*3];
+            if (maxu < gpuf[i*3+1]) maxu = gpuf[i*3+1];
+            if (minu > gpuf[i*3+1]) minu = gpuf[i*3+1];
+            if (maxv < gpuf[i*3+2]) maxv = gpuf[i*3+2];
+            if (minv > gpuf[i*3+2]) minv = gpuf[i*3+2];
+        }
+        LOG("gpu   [%f %f]  [%f %f]  [%f %f]", maxl, minl, maxu, minu, maxv, minv);
+        //输出结果：gpu   [100.000000 0.000000]  [121.060478 -32.152004]  [84.132713 -38.480782]
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    }
+
+
+    program = createComputeProgram(luv2rgb);
+    glUseProgram(program);
+    CHECK();
+    LOG("2 USE luv 2 rgb");
+
+    GLuint outrgba;
+    glGenBuffers(1, &outrgba);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, outrgba);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, w*h*4, NULL, GL_STREAM_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, outrgba);
+
+    posw = glGetUniformLocation(program, "width");
+    glUniform1i(posw, w);
+    CHECK();
+    LOG("2 SET W H:%d", posw);
+
+    glDispatchCompute(w/10, h/10, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    CHECK();
+    LOG("DISPATCH LUV 2 RGB");
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, outrgba);
+    uchar *gpurgba = (uchar*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, w*h*4, GL_MAP_READ_BIT);
+    uchar *cpurgba = (uchar*)malloc(sizeof(int) * w* h);
+    memcpy(cpurgba, gpurgba, sizeof(int) * w* h);
+    LOG("MEMCPY END %p", cpurgba);
+
+    Mat rgbamat(h ,w, CV_8UC4, cpurgba);
+    cvtColor(rgbamat, rgbamat, CV_RGBA2BGR);
+    normalize(rgbamat, rgbamat, 0, 255, NORM_MINMAX, CV_8U);
+    imwrite(paddingPath("luv2rgba"), rgbamat);
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    free(cpurgba);
+    LOG("luv 2 rgba end");
+}
+
 void myRgbComputeShader()
 {
     struct RGBA{
